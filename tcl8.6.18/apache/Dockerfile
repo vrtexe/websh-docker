@@ -57,6 +57,11 @@ RUN set -eux; \
 	echo 'LoadModule websh_module /usr/local/lib/httpd/modules/mod_websh.so' > /etc/apache2/mods-available/websh.load; \
 	printf '%s\n' '<IfModule websh_module>' '	AddHandler websh .ws3' '</IfModule>' > /etc/apache2/mods-available/websh.conf; \
 	a2enmod websh; \
+# prefork instead of event: mod_websh runs its Tcl interpreters in the request handler; with
+# worker threads, Tcl 8.5's C stack check can compute a wrong limit and fail every request
+# with "out of stack space". One process per handler keeps Tcl in a process's main thread.
+	a2dismod -f mpm_event; \
+	a2enmod mpm_prefork; \
 # logs to the container output
 	ln -sfT /dev/stdout /var/log/apache2/access.log; \
 	ln -sfT /dev/stderr /var/log/apache2/error.log; \

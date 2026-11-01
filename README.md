@@ -32,6 +32,12 @@ that Tcl build.
 | Rocky Linux 9 | `-rocky9-minimal` | `tcl:<v>-rocky9-minimal` | the same |
 | Rocky Linux 8 | `-rocky8-minimal` | `tcl:<v>-rocky8-minimal` | the same |
 | Apache | `-apache` | `tcl:<v>-slim-trixie` | Apache httpd 2.4 with `mod_websh`; `*.ws3` under `/var/www/html` are websh scripts |
+| Apache on Rocky Linux 9 | `-rocky9-minimal-apache` | `tcl:<v>-rocky9-minimal` | the same with Rocky Linux's httpd |
+| Apache on Rocky Linux 8 | `-rocky8-minimal-apache` | `tcl:<v>-rocky8-minimal` | the same with Rocky Linux's httpd |
+
+The Apache images run httpd with the `prefork` MPM: with worker threads, Tcl 8.5's C stack
+check computes a wrong limit inside Apache's threads and fails every request with
+"out of stack space".
 
 ## Tags
 

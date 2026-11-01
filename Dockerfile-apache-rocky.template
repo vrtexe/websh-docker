@@ -55,6 +55,13 @@ RUN set -eux; \
 	microdnf -y install httpd; \
 	microdnf clean all; \
 	ldconfig; \
+# prefork instead of event: mod_websh runs its Tcl interpreters in the request handler; with
+# worker threads, Tcl 8.5's C stack check computes a wrong limit and fails every request with
+# "out of stack space". One process per handler keeps Tcl in a process's main thread.
+	sed -i -e 's/^LoadModule mpm_event_module/#LoadModule mpm_event_module/' \
+		-e 's/^#LoadModule mpm_prefork_module/LoadModule mpm_prefork_module/' \
+		/etc/httpd/conf.modules.d/00-mpm.conf; \
+	grep -q '^LoadModule mpm_prefork_module' /etc/httpd/conf.modules.d/00-mpm.conf; \
 	printf '%s\n' \
 		'LoadModule websh_module /usr/local/lib/httpd/modules/mod_websh.so' \
 		'<IfModule websh_module>' \
