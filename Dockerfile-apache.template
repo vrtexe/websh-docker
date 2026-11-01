@@ -22,7 +22,9 @@ RUN set -eux; \
 	autoconf; \
 # websh uses "bool" as a variable name, a keyword in C23 (gcc 15's default); its configure
 # overwrites CFLAGS but keeps CC, so the standard goes there
-	CC='cc -std=gnu17' ./configure --prefix=/usr/local --with-tcl=/usr/local/lib --enable-threads \
+# threads only if this Tcl build has them (8.5 is non-threaded, 8.6 threaded, as upstream)
+	threads=$(. /usr/local/lib/tclConfig.sh; [ "$TCL_THREADS" = 1 ] && echo --enable-threads || true); \
+	CC='cc -std=gnu17' ./configure --prefix=/usr/local --with-tcl=/usr/local/lib $threads \
 		--with-httpdinclude=%%HTTPD_INCLUDE%% --with-aprinclude=%%APR_INCLUDE%% --with-apuinclude=%%APR_INCLUDE%%; \
 	make -j"$(nproc)"; \
 	make install-binaries install-libraries; \
