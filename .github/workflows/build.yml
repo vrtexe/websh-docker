@@ -1,0 +1,202 @@
+name: build
+
+# Pull requests build and test only. Pushes to main and the monthly rebuild (base image fixes)
+# also publish to GHCR, then mirror to Docker Hub.
+#
+# GHCR is the primary registry; the Tcl base images come from there too. Docker Hub's free
+# tier rate-limits bursts from many parallel jobs, so only one job talks to it, one image at
+# a time, with explicit credentials (skopeo).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 6 1 * *'   # after the Tcl images' monthly rebuild at 04:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # repository variable DOCKERHUB_USERNAME and secret DOCKERHUB_TOKEN (a Docker Hub access token);
+  # GHCR needs nothing extra: GITHUB_TOKEN pushes to ghcr.io/<owner>/websh (GHCR_IMAGE, set per job)
+  IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/websh
+  PUBLISH: ${{ github.event_name != 'pull_request' }}
+
+jobs:
+  generated:
+    name: Dockerfiles match templates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./apply-templates.sh && git diff --exit-code
+
+  matrix:
+    runs-on: ubuntu-24.04
+    outputs:
+      images: ${{ steps.m.outputs.images }}
+      builds: ${{ steps.m.outputs.builds }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: m
+        run: |
+          images=$(jq -c '[.variants | keys[] as $var | $ARGS.named.tcl[] as $t | {tcl: $t, variant: $var}]' \
+            --argjson tcl "$(jq -c .tcl versions.json)" versions.json)
+          builds=$(jq -c '[.[] as $i | ({arch: "amd64", runner: "ubuntu-24.04"}, {arch: "arm64", runner: "ubuntu-24.04-arm"}) | $i + .]' <<<"$images")
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+          echo "builds=$builds" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [generated, matrix]
+    name: tcl${{ matrix.tcl }}-${{ matrix.variant }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TCL: ${{ matrix.tcl }}
+      VARIANT: ${{ matrix.variant }}
+      ARCH: ${{ matrix.arch }}
+      SCOPE: tcl${{ matrix.tcl }}-${{ matrix.variant }}-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      # GHCR names must be lower case; GitHub owner names may not be
+      - name: GHCR image name
+        run: echo "GHCR_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/websh" >> "$GITHUB_ENV"
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # --pull: a new Tcl base image (its monthly rebuild) changes the cache key
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: tcl${{ matrix.tcl }}/${{ matrix.variant }}
+          pull: true
+          load: true
+          tags: websh-test
+          cache-from: type=gha,scope=${{ env.SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.SCOPE }}
+      - name: Test
+        run: |
+          kind=websh
+          [ "$VARIANT" = apache ] && kind=apache
+          ./test.sh websh-test "$TCL" "$kind"
+
+      # the tested image again (cache hit), pushed untagged; the merge job writes the tags
+      - name: Push by digest
+        id: push
+        if: env.PUBLISH == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: tcl${{ matrix.tcl }}/${{ matrix.variant }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ env.GHCR_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=${{ env.SCOPE }}
+      - name: Record digest
+        if: env.PUBLISH == 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: mkdir -p digests && touch "digests/${DIGEST#sha256:}"
+      - if: env.PUBLISH == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-tcl${{ matrix.tcl }}-${{ matrix.variant }}-${{ matrix.arch }}
+          path: digests/*
+
+  merge:
+    needs: [matrix, build]
+    # also after a partial failure: every image whose two arch builds both passed still gets tagged
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    name: tag tcl${{ matrix.tcl }}-${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TCL: ${{ matrix.tcl }}
+      VARIANT: ${{ matrix.variant }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.images) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: digests
+          pattern: digests-tcl${{ matrix.tcl }}-${{ matrix.variant }}-*
+          merge-multiple: true
+      - name: Require both architectures
+        run: test "$(ls digests | wc -l)" -eq 2
+      - name: GHCR image name
+        run: echo "GHCR_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/websh" >> "$GITHUB_ENV"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # the runner's own docker CLI (not a BuildKit container), so the login above applies
+      - name: Create multi-arch tags
+        run: |
+          tags=$(./tags.sh "$TCL" "$VARIANT")
+          targets=""
+          for t in $tags; do targets="$targets -t $GHCR_IMAGE:$t"; done
+          docker buildx imagetools create --builder default $targets $(printf "$GHCR_IMAGE@sha256:%s " $(ls digests))
+          docker buildx imagetools inspect --builder default "$GHCR_IMAGE:${tags%% *}"
+
+  dockerhub:
+    needs: [matrix, merge]
+    # also after a partial failure; skipped when no Docker Hub account is configured
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && vars.DOCKERHUB_USERNAME != '' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGES: ${{ needs.matrix.outputs.images }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: GHCR image name
+        run: echo "GHCR_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/websh" >> "$GITHUB_ENV"
+      # skopeo sends the credentials with every request; --all --preserve-digests copies the
+      # multi-arch index unchanged (same digests as GHCR)
+      - name: Mirror GHCR to Docker Hub
+        env:
+          HUB_USER: ${{ vars.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          command -v skopeo >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q skopeo; }
+          failed=""
+          while read -r tcl variant; do
+            tags=$(./tags.sh "$tcl" "$variant")
+            source="docker://$GHCR_IMAGE:${tags%% *}"
+            echo "::group::$source"
+            for t in $tags; do
+              ok=""
+              for attempt in 1 2 3; do
+                if skopeo copy --all --preserve-digests --retry-times 3 \
+                     --src-creds "$GITHUB_ACTOR:$GHCR_TOKEN" --dest-creds "$HUB_USER:$HUB_TOKEN" \
+                     "$source" "docker://$IMAGE:$t"; then ok=1; break; fi
+                [ "$attempt" = 3 ] || { echo "attempt $attempt failed, retrying in 2 minutes"; sleep 120; }
+              done
+              [ -n "$ok" ] || failed="$failed $t"
+            done
+            echo "::endgroup::"
+          done < <(jq -r '.[] | "\(.tcl) \(.variant)"' <<<"$IMAGES")
+          if [ -n "$failed" ]; then echo "not mirrored:$failed" >&2; exit 1; fi
