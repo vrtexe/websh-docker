@@ -5,7 +5,11 @@
     "sha256": "53cbac6ce460dd11dc5447f8e9106711ef107f0979c4e72fa7b5ee1e8a28a581"
   },
   "tclImage": "ghcr.io/vrtexe/tcl",
-  "tcl": ["8.5.13", "8.5.19", "8.6.18"],
+  "tcl": [
+    "8.5.13",
+    "8.5.19",
+    "8.6.18"
+  ],
   "variants": {
     "slim-trixie": {
       "template": "websh",
@@ -37,6 +41,20 @@
       "buildDeps": "apt-get update && apt-get install -y --no-install-recommends autoconf automake apache2-dev && rm -rf /var/lib/apt/lists/*",
       "httpdInclude": "/usr/include/apache2",
       "aprInclude": "/usr/include/apr-1.0"
+    },
+    "rocky9-minimal-apache": {
+      "template": "apache-rocky",
+      "tclVariant": "rocky9-minimal",
+      "buildDeps": "microdnf -y install autoconf automake httpd-devel && microdnf clean all",
+      "httpdInclude": "/usr/include/httpd",
+      "aprInclude": "/usr/include/apr-1"
+    },
+    "rocky8-minimal-apache": {
+      "template": "apache-rocky",
+      "tclVariant": "rocky8-minimal",
+      "buildDeps": "microdnf -y install autoconf automake httpd-devel && microdnf clean all",
+      "httpdInclude": "/usr/include/httpd",
+      "aprInclude": "/usr/include/apr-1"
     }
   }
 }

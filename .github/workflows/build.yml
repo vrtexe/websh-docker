@@ -93,7 +93,7 @@ jobs:
       - name: Test
         run: |
           kind=websh
-          [ "$VARIANT" = apache ] && kind=apache
+          case "$VARIANT" in *apache) kind=apache ;; esac
           ./test.sh websh-test "$TCL" "$kind"
 
       # the tested image again (cache hit), pushed untagged; the merge job writes the tags
