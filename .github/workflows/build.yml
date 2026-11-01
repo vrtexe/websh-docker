@@ -115,7 +115,9 @@ jobs:
       - if: env.PUBLISH == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: digests-tcl${{ matrix.tcl }}-${{ matrix.variant }}-${{ matrix.arch }}
+          # arch first, variant last: the merge pattern must not let "rocky8-minimal" also
+          # match "rocky8-minimal-apache"
+          name: digests-${{ matrix.arch }}--tcl${{ matrix.tcl }}--${{ matrix.variant }}
           path: digests/*
 
   merge:
@@ -139,7 +141,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: digests
-          pattern: digests-tcl${{ matrix.tcl }}-${{ matrix.variant }}-*
+          pattern: digests-*--tcl${{ matrix.tcl }}--${{ matrix.variant }}
           merge-multiple: true
       - name: Require both architectures
         run: test "$(ls digests | wc -l)" -eq 2
