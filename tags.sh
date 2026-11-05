@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Print the tags for one Tcl version and variant:
-#   ./tags.sh 8.6.18 alpine3.24  ->  3.6.0b5-tcl8.6.18-alpine ... 3.6-tcl8.6-alpine ... 3.6-alpine alpine
-# websh version first (3.6.0b5 and 3.6), then the Tcl it is built on: the exact version, plus
-# tcl8.6 / tcl8 when it is the newest of that minor / major. The newest Tcl overall also gets
-# tags without a Tcl part (3.6-alpine, alpine). Debian slim is the default variant (no suffix,
-# "latest"), since there is no full Debian variant here.
+# Print the tags of one image: ./tags.sh <tcl-version> <variant>
+# Short aliases go to the newest Tcl; slim is the default.
 set -euo pipefail
 cd "$(dirname "$0")"
 tcl=$1 variant=$2
@@ -23,7 +19,7 @@ jq -r --arg tcl "$tcl" --arg var "$variant" '
 	| .websh.version as $wv
 	| [$wv, ($wv | split(".")[0:2] | join("."))] as $websh
 	| (if $var == "slim-trixie" then ["", "-slim", "-slim-trixie"]
-	   elif ($var | startswith("alpine")) then ["-alpine", "-\($var)"]
+	   elif ($var | startswith("alpine")) then ["-\($var | sub("^alpine[0-9.]+"; "alpine"))", "-\($var)"]
 	   else ["-\($var)"] end) as $suffixes
 	| [$websh[] as $w | $tcls[] as $t | $suffixes[] as $s | "\($w)-\($t)\($s)"]
 	  + (if newest(true) then

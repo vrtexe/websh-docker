@@ -13,47 +13,78 @@
   "variants": {
     "slim-trixie": {
       "template": "websh",
-      "buildDeps": "apt-get update && apt-get install -y --no-install-recommends autoconf automake apache2-dev && rm -rf /var/lib/apt/lists/*",
+      "buildDeps": [
+        "apt-get update",
+        "apt-get install -y --no-install-recommends autoconf automake apache2-dev",
+        "rm -rf /var/lib/apt/lists/*"
+      ],
       "httpdInclude": "/usr/include/apache2",
       "aprInclude": "/usr/include/apr-1.0"
     },
     "alpine3.24": {
       "template": "websh",
-      "buildDeps": "apk add --no-cache autoconf automake apache2-dev apr-dev apr-util-dev",
+      "buildDeps": [
+        "apk add --no-cache autoconf automake apache2-dev apr-dev apr-util-dev"
+      ],
       "httpdInclude": "/usr/include/apache2",
       "aprInclude": "/usr/include/apr-1"
     },
     "rocky9-minimal": {
       "template": "websh",
-      "buildDeps": "microdnf -y install autoconf automake httpd-devel && microdnf clean all",
+      "buildDeps": [
+        "microdnf -y install autoconf automake httpd-devel",
+        "microdnf clean all"
+      ],
       "httpdInclude": "/usr/include/httpd",
       "aprInclude": "/usr/include/apr-1"
     },
     "rocky8-minimal": {
       "template": "websh",
-      "buildDeps": "microdnf -y install autoconf automake httpd-devel && microdnf clean all",
+      "buildDeps": [
+        "microdnf -y install autoconf automake httpd-devel",
+        "microdnf clean all"
+      ],
       "httpdInclude": "/usr/include/httpd",
       "aprInclude": "/usr/include/apr-1"
     },
     "apache": {
       "template": "apache",
       "tclVariant": "slim-trixie",
-      "buildDeps": "apt-get update && apt-get install -y --no-install-recommends autoconf automake apache2-dev && rm -rf /var/lib/apt/lists/*",
+      "buildDeps": [
+        "apt-get update",
+        "apt-get install -y --no-install-recommends autoconf automake apache2-dev",
+        "rm -rf /var/lib/apt/lists/*"
+      ],
       "httpdInclude": "/usr/include/apache2",
       "aprInclude": "/usr/include/apr-1.0"
     },
     "rocky9-minimal-apache": {
       "template": "apache-rocky",
       "tclVariant": "rocky9-minimal",
-      "buildDeps": "microdnf -y install autoconf automake httpd-devel && microdnf clean all",
+      "buildDeps": [
+        "microdnf -y install autoconf automake httpd-devel",
+        "microdnf clean all"
+      ],
       "httpdInclude": "/usr/include/httpd",
       "aprInclude": "/usr/include/apr-1"
     },
     "rocky8-minimal-apache": {
       "template": "apache-rocky",
       "tclVariant": "rocky8-minimal",
-      "buildDeps": "microdnf -y install autoconf automake httpd-devel && microdnf clean all",
+      "buildDeps": [
+        "microdnf -y install autoconf automake httpd-devel",
+        "microdnf clean all"
+      ],
       "httpdInclude": "/usr/include/httpd",
+      "aprInclude": "/usr/include/apr-1"
+    },
+    "alpine3.24-apache": {
+      "template": "apache-alpine",
+      "tclVariant": "alpine3.24",
+      "buildDeps": [
+        "apk add --no-cache autoconf automake apache2-dev apr-dev apr-util-dev"
+      ],
+      "httpdInclude": "/usr/include/apache2",
       "aprInclude": "/usr/include/apr-1"
     }
   }

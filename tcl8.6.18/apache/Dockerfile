@@ -2,74 +2,52 @@
 
 FROM ghcr.io/vrtexe/tcl:8.6.18-slim-trixie-dev AS build
 
-ENV WEBSH_VERSION=3.6.0b5
-ENV WEBSH_COMMIT=f3dee465d969f89a5f28720271c5498b11694930
-ENV WEBSH_SHA256=53cbac6ce460dd11dc5447f8e9106711ef107f0979c4e72fa7b5ee1e8a28a581
-
-RUN apt-get update && apt-get install -y --no-install-recommends autoconf automake apache2-dev && rm -rf /var/lib/apt/lists/*
-
-# websh 3.6.0b5 is the last release (2009); this commit (2018) adds Apache 2.4 support,
-# which mod_websh needs
 RUN set -eux; \
-	curl -fsSL --retry 5 --retry-delay 5 -o websh.tar.gz "https://github.com/apache/tcl-websh/archive/${WEBSH_COMMIT}.tar.gz"; \
-	echo "${WEBSH_SHA256} *websh.tar.gz" | sha256sum -c -; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends autoconf automake apache2-dev; \
+	rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+	curl -fsSL --retry 5 --retry-delay 5 -o websh.tar.gz "https://github.com/apache/tcl-websh/archive/f3dee465d969f89a5f28720271c5498b11694930.tar.gz"; \
+	echo '53cbac6ce460dd11dc5447f8e9106711ef107f0979c4e72fa7b5ee1e8a28a581 *websh.tar.gz' | sha256sum -c -; \
 	mkdir -p /usr/src/websh; \
 	tar -xzf websh.tar.gz -C /usr/src/websh --strip-components=1; \
-	rm websh.tar.gz; \
 	cd /usr/src/websh/src/unix; \
-# the bundled config.guess predates aarch64
 	cp /usr/share/automake-*/config.guess /usr/share/automake-*/config.sub .; \
-# upstream pkgIndex.tcl still says 3.6.0 while the library provides 3.6.0b5
 	sed -i 's/^package ifneeded websh 3\.6\.0 /package ifneeded websh 3.6.0b5 /' pkgIndex.tcl; \
 	autoconf; \
-# websh uses "bool" as a variable name, a keyword in C23 (gcc 15's default); its configure
-# overwrites CFLAGS but keeps CC, so the standard goes there
-# threads only if this Tcl build has them (8.5 is non-threaded, 8.6 threaded, as upstream)
-	threads=$(. /usr/local/lib/tclConfig.sh; [ "$TCL_THREADS" = 1 ] && echo --enable-threads || true); \
-	CC='cc -std=gnu17' ./configure --prefix=/usr/local --with-tcl=/usr/local/lib $threads \
+	./configure CC='cc -std=gnu17' --prefix=/usr/local --with-tcl=/usr/local/lib \
+		$(. /usr/local/lib/tclConfig.sh; [ "$TCL_THREADS" = 1 ] && echo --enable-threads) \
 		--with-httpdinclude=/usr/include/apache2 --with-aprinclude=/usr/include/apr-1.0 --with-apuinclude=/usr/include/apr-1.0; \
 	make -j"$(nproc)"; \
 	make install-binaries install-libraries; \
-	install -D -m 644 /usr/src/websh/LICENSE /usr/local/share/licenses/websh/LICENSE; \
-	install -D -m 644 /usr/src/websh/NOTICE /usr/local/share/licenses/websh/NOTICE; \
-	cd /; \
-	rm -rf /usr/src/websh; \
-# only websh's own files, laid out like /usr/local, for the runtime stage to copy; copying all
-# of /usr/local would store a second copy of Tcl in a new layer
-	mkdir -p /out/bin /out/lib /out/share/licenses; \
+	mkdir -p /out/bin /out/lib; \
 	cp -a /usr/local/bin/websh* /out/bin/; \
 	cp -a /usr/local/lib/*websh* /usr/local/lib/httpd /usr/local/lib/pkgIndex.tcl /out/lib/; \
-	cp -a /usr/local/share/licenses/websh /out/share/licenses/; \
-	ldconfig; \
-	echo 'if {[package present websh] ne $env(WEBSH_VERSION)} { error "got [package present websh]" }' | websh /dev/stdin
+	install -D -m 644 -t /out/share/licenses/websh /usr/src/websh/LICENSE /usr/src/websh/NOTICE
 
 
-# Apache httpd 2.4 with mod_websh: *.ws3 files under /var/www/html are websh scripts
 FROM ghcr.io/vrtexe/tcl:8.6.18-slim-trixie
 
 ENV WEBSH_VERSION=3.6.0b5
 
-COPY --from=build /out/ /usr/local/
-
 RUN set -eux; \
 	apt-get update; \
 	apt-get install -y --no-install-recommends apache2; \
-	rm -rf /var/lib/apt/lists/*; \
+	rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /out/ /usr/local/
+
+# prefork: Tcl 8.5 fails with "out of stack space" in worker threads.
+RUN set -eux; \
 	ldconfig; \
 	echo 'LoadModule websh_module /usr/local/lib/httpd/modules/mod_websh.so' > /etc/apache2/mods-available/websh.load; \
 	printf '%s\n' '<IfModule websh_module>' '	AddHandler websh .ws3' '</IfModule>' > /etc/apache2/mods-available/websh.conf; \
-	a2enmod websh; \
-# prefork instead of event: mod_websh runs its Tcl interpreters in the request handler; with
-# worker threads, Tcl 8.5's C stack check can compute a wrong limit and fail every request
-# with "out of stack space". One process per handler keeps Tcl in a process's main thread.
 	a2dismod -f mpm_event; \
-	a2enmod mpm_prefork; \
-# logs to the container output
+	a2enmod mpm_prefork websh cgi; \
 	ln -sfT /dev/stdout /var/log/apache2/access.log; \
 	ln -sfT /dev/stderr /var/log/apache2/error.log; \
-	ln -sfT /dev/stdout /var/log/apache2/other_vhosts_access.log; \
-	apache2ctl configtest; \
-	echo 'if {[package present websh] ne $env(WEBSH_VERSION)} { error "got [package present websh]" }' | websh /dev/stdin
+	ln -sfT /dev/stdout /var/log/apache2/other_vhosts_access.log
 
 EXPOSE 80
 STOPSIGNAL SIGWINCH

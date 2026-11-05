@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Smoke-test one image on the machine's own architecture:
-#   ./test.sh <image> <tcl-version>          pure websh image
-#   ./test.sh <image> <tcl-version> apache   -apache image: also serve test/hello.ws3 over HTTP
-#   ENGINE=podman ./test.sh ...    PLATFORM=linux/amd64 ./test.sh ...   (another arch, emulated)
-# Checks websh and Tcl versions, CPU, the websh package from tclsh, and a CGI request.
+# Smoke-test an image: ./test.sh <image> <tcl-version> [apache]
+# Options: ENGINE=podman, PLATFORM=linux/amd64 (emulated).
 set -euo pipefail
 cd "$(dirname "$0")"
 image=$1 tcl=$2 kind=${3:-websh}
@@ -40,7 +37,9 @@ case "$body" in *"hello websh"*) ;; *) echo "FAIL: CGI output: $body" >&2; exit 
 
 if [ "$kind" = apache ]; then
 	id=$("$engine" run -d --platform "$platform" -p 127.0.0.1::80 \
-		-v "$PWD/test/hello.ws3:/var/www/html/hello.ws3:ro" "$image")
+		-v "$PWD/test/hello.ws3:/var/www/html/hello.ws3:ro" \
+		-v "$PWD/test/hello.cgi:/usr/lib/cgi-bin/hello.cgi:ro" \
+		-v "$PWD/test/hello.cgi:/var/www/cgi-bin/hello.cgi:ro" "$image")
 	trap '"$engine" rm -f "$id" > /dev/null' EXIT
 	port=$("$engine" port "$id" 80 | head -1 | sed 's/.*://')
 	body=""
@@ -50,6 +49,10 @@ if [ "$kind" = apache ]; then
 	done
 	case "$body" in *"hello apache from websh $websh"*) ;; *)
 		echo "FAIL: HTTP: ${body:-no response}" >&2; "$engine" logs "$id" >&2; exit 1 ;; esac
+	# Debian serves /usr/lib/cgi-bin, Rocky and Alpine /var/www/cgi-bin.
+	body=$(curl -fsS "http://127.0.0.1:$port/cgi-bin/hello.cgi?name=cgi" 2>/dev/null || true)
+	case "$body" in *"hello cgi from websh $websh"*) ;; *)
+		echo "FAIL: CGI over HTTP: ${body:-no response}" >&2; "$engine" logs "$id" >&2; exit 1 ;; esac
 fi
 
 echo "ok $image ($kind): websh $websh, Tcl $tcl, $machine"

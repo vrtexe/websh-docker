@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Render tcl<version>/<variant>/Dockerfile for every Tcl version and variant in versions.json.
-# The generated files are committed, so each one can be read and built on its own.
-# Rendering goes through jq: the build commands contain "&&", which sed (and bash 5.2's
-# ${var//x/y}) would read as "insert the matched text".
+# Render tcl<version>/<variant>/Dockerfile; the output is committed.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -18,7 +15,7 @@ for tcl in $(jq -r '.tcl[]' versions.json); do
 				| gsub("%%TCL_IMAGE%%"; $c.tclImage)
 				| gsub("%%TCL_VERSION%%"; $tcl)
 				| gsub("%%TCL_VARIANT%%"; $v.tclVariant // $variant)
-				| gsub("%%BUILD_DEPS%%"; $v.buildDeps)
+				| gsub("%%BUILD_DEPS%%"; $v.buildDeps | join("; \\\n\t"))
 				| gsub("%%HTTPD_INCLUDE%%"; $v.httpdInclude)
 				| gsub("%%APR_INCLUDE%%"; $v.aprInclude)
 				| gsub("%%WEBSH_VERSION%%"; $c.websh.version)

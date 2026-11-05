@@ -1,0 +1,49 @@
+FROM %%TCL_IMAGE%%:%%TCL_VERSION%%-%%TCL_VARIANT%%-dev AS build
+
+RUN set -eux; \
+	%%BUILD_DEPS%%
+
+RUN set -eux; \
+	curl -fsSL --retry 5 --retry-delay 5 -o websh.tar.gz "https://github.com/apache/tcl-websh/archive/%%WEBSH_COMMIT%%.tar.gz"; \
+	echo '%%WEBSH_SHA256%% *websh.tar.gz' | sha256sum -c -; \
+	mkdir -p /usr/src/websh; \
+	tar -xzf websh.tar.gz -C /usr/src/websh --strip-components=1; \
+	cd /usr/src/websh/src/unix; \
+	cp /usr/share/automake-*/config.guess /usr/share/automake-*/config.sub .; \
+	sed -i 's/^package ifneeded websh 3\.6\.0 /package ifneeded websh 3.6.0b5 /' pkgIndex.tcl; \
+	autoconf; \
+	./configure CC='cc -std=gnu17' --prefix=/usr/local --with-tcl=/usr/local/lib \
+		$(. /usr/local/lib/tclConfig.sh; [ "$TCL_THREADS" = 1 ] && echo --enable-threads) \
+		--with-httpdinclude=%%HTTPD_INCLUDE%% --with-aprinclude=%%APR_INCLUDE%% --with-apuinclude=%%APR_INCLUDE%%; \
+	make -j"$(nproc)"; \
+	make install-binaries install-libraries; \
+	mkdir -p /out/bin /out/lib; \
+	cp -a /usr/local/bin/websh* /out/bin/; \
+	cp -a /usr/local/lib/*websh* /usr/local/lib/httpd /usr/local/lib/pkgIndex.tcl /out/lib/; \
+	install -D -m 644 -t /out/share/licenses/websh /usr/src/websh/LICENSE /usr/src/websh/NOTICE
+
+
+FROM %%TCL_IMAGE%%:%%TCL_VERSION%%-%%TCL_VARIANT%%
+
+ENV WEBSH_VERSION=%%WEBSH_VERSION%%
+
+RUN apk add --no-cache apache2
+
+COPY --from=build /out/ /usr/local/
+
+# Alpine's httpd already runs prefork; paths as on Rocky Linux.
+RUN set -eux; \
+	printf '%s\n' \
+		'LoadModule cgi_module modules/mod_cgi.so' \
+		'LoadModule websh_module /usr/local/lib/httpd/modules/mod_websh.so' \
+		'AddHandler websh .ws3' \
+		'ServerName localhost' \
+		> /etc/apache2/conf.d/websh.conf; \
+	ln -s localhost/htdocs /var/www/html; \
+	ln -s localhost/cgi-bin /var/www/cgi-bin; \
+	ln -s /dev/stdout /var/log/apache2/access.log; \
+	ln -s /dev/stderr /var/log/apache2/error.log
+
+EXPOSE 80
+STOPSIGNAL SIGWINCH
+CMD ["httpd", "-D", "FOREGROUND"]

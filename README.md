@@ -31,9 +31,10 @@ that Tcl build.
 | Alpine | `-alpine` | `tcl:<v>-alpine3.24` | the same, smallest |
 | Rocky Linux 9 | `-rocky9-minimal` | `tcl:<v>-rocky9-minimal` | the same |
 | Rocky Linux 8 | `-rocky8-minimal` | `tcl:<v>-rocky8-minimal` | the same |
-| Apache | `-apache` | `tcl:<v>-slim-trixie` | Apache httpd 2.4 with `mod_websh`; `*.ws3` under `/var/www/html` are websh scripts |
+| Apache | `-apache` | `tcl:<v>-slim-trixie` | Apache httpd 2.4 with `mod_websh` and CGI (see [Usage](#usage)) |
 | Apache on Rocky Linux 9 | `-rocky9-minimal-apache` | `tcl:<v>-rocky9-minimal` | the same with Rocky Linux's httpd |
 | Apache on Rocky Linux 8 | `-rocky8-minimal-apache` | `tcl:<v>-rocky8-minimal` | the same with Rocky Linux's httpd |
+| Apache on Alpine | `-alpine-apache`, `-alpine3.24-apache` | `tcl:<v>-alpine3.24` | the same with Alpine's httpd, smallest |
 
 The Apache images run httpd with the `prefork` MPM: with worker threads, Tcl 8.5's C stack
 check computes a wrong limit inside Apache's threads and fails every request with
@@ -94,12 +95,28 @@ By default each `.ws3` file gets its own interpreter, like CGI. For shared inter
 or templated `.html`, add a `WebshConfig` file to the Apache configuration; see the websh
 documentation.
 
+Apache with CGI: every Apache image also runs websh scripts as CGI programs, one process per
+request, the way many websh applications are deployed. Put executable scripts that start with
+`#!/usr/local/bin/websh` in the CGI directory, served under `/cgi-bin/`:
+
+| Image | CGI directory |
+|---|---|
+| `-apache` (Debian) | `/usr/lib/cgi-bin` |
+| `-rocky9-minimal-apache`, `-rocky8-minimal-apache`, `-alpine-apache` | `/var/www/cgi-bin` |
+
+```sh
+docker run --rm -p 8080:80 -v "$PWD/cgi-bin":/usr/lib/cgi-bin ghcr.io/vrtexe/websh:3.6-apache
+# http://localhost:8080/cgi-bin/hello.cgi
+```
+
+Both modes work side by side; which one a script uses depends only on where it is.
+
 ## Repository layout
 
 The same layout as the official Docker images and the Tcl images:
 
 - `versions.json` lists the websh commit and checksum, the Tcl versions and the variants.
-- `Dockerfile-websh.template` and `Dockerfile-apache.template` are the build recipes.
+- The `Dockerfile-*.template` files are the build recipes.
 - `apply-templates.sh` renders `tcl<version>/<variant>/Dockerfile`; the rendered files are
   committed, so each one can be built on its own: `docker build tcl8.6.18/alpine3.24`.
 - `tags.sh <tcl-version> <variant>` prints the tags for one image.

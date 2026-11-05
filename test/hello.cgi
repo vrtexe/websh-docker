@@ -1,0 +1,5 @@
+#!/usr/local/bin/websh
+web::command default {
+	web::put "hello [web::param name] from websh [package present websh] on Tcl [info patchlevel]"
+}
+web::dispatch

@@ -1,11 +1,7 @@
 name: build
 
-# Pull requests build and test only. Pushes to main and the monthly rebuild (base image fixes)
-# also publish to GHCR, then mirror to Docker Hub.
-#
-# GHCR is the primary registry; the Tcl base images come from there too. Docker Hub's free
-# tier rate-limits bursts from many parallel jobs, so only one job talks to it, one image at
-# a time, with explicit credentials (skopeo).
+# PRs build and test; main and the monthly run also publish.
+# Docker Hub is mirrored by one job, image by image (rate limits).
 on:
   push:
     branches: [main]
@@ -22,8 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # repository variable DOCKERHUB_USERNAME and secret DOCKERHUB_TOKEN (a Docker Hub access token);
-  # GHCR needs nothing extra: GITHUB_TOKEN pushes to ghcr.io/<owner>/websh (GHCR_IMAGE, set per job)
+  # Needs DOCKERHUB_USERNAME (variable) and DOCKERHUB_TOKEN (secret).
   IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/websh
   PUBLISH: ${{ github.event_name != 'pull_request' }}
 
@@ -69,7 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
-      # GHCR names must be lower case; GitHub owner names may not be
+      # GHCR names must be lower case.
       - name: GHCR image name
         run: echo "GHCR_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/websh" >> "$GITHUB_ENV"
       - name: Log in to GHCR
@@ -80,7 +75,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # --pull: a new Tcl base image (its monthly rebuild) changes the cache key
+      # pull: a new Tcl base image changes the cache key.
       - name: Build
         uses: docker/build-push-action@v7
         with:
@@ -96,7 +91,7 @@ jobs:
           case "$VARIANT" in *apache) kind=apache ;; esac
           ./test.sh websh-test "$TCL" "$kind"
 
-      # the tested image again (cache hit), pushed untagged; the merge job writes the tags
+      # Cache hit of the tested image; the merge job tags it.
       - name: Push by digest
         id: push
         if: env.PUBLISH == 'true'
@@ -115,14 +110,13 @@ jobs:
       - if: env.PUBLISH == 'true'
         uses: actions/upload-artifact@v7
         with:
-          # arch first, variant last: the merge pattern must not let "rocky8-minimal" also
-          # match "rocky8-minimal-apache"
+          # Variant last: "rocky8-minimal" must not match "-apache".
           name: digests-${{ matrix.arch }}--tcl${{ matrix.tcl }}--${{ matrix.variant }}
           path: digests/*
 
   merge:
     needs: [matrix, build]
-    # also after a partial failure: every image whose two arch builds both passed still gets tagged
+    # Also after partial failures.
     if: ${{ !cancelled() && github.event_name != 'pull_request' }}
     name: tag tcl${{ matrix.tcl }}-${{ matrix.variant }}
     runs-on: ubuntu-24.04
@@ -152,7 +146,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # the runner's own docker CLI (not a BuildKit container), so the login above applies
+      # The runner's docker CLI, not BuildKit, so the login applies.
       - name: Create multi-arch tags
         run: |
           tags=$(./tags.sh "$TCL" "$VARIANT")
@@ -163,7 +157,7 @@ jobs:
 
   dockerhub:
     needs: [matrix, merge]
-    # also after a partial failure; skipped when no Docker Hub account is configured
+    # Also after partial failures; needs a Docker Hub account.
     if: ${{ !cancelled() && github.event_name != 'pull_request' && vars.DOCKERHUB_USERNAME != '' }}
     runs-on: ubuntu-24.04
     permissions:
@@ -175,8 +169,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: GHCR image name
         run: echo "GHCR_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/websh" >> "$GITHUB_ENV"
-      # skopeo sends the credentials with every request; --all --preserve-digests copies the
-      # multi-arch index unchanged (same digests as GHCR)
+      # skopeo authenticates every request; digests match GHCR.
       - name: Mirror GHCR to Docker Hub
         env:
           HUB_USER: ${{ vars.DOCKERHUB_USERNAME }}
